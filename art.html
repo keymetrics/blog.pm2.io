@@ -1,0 +1,248 @@
+<section class="post-full-content">
+  <div class="post-content">
+      <h2 id="introduction">Introduction</h2>
+<p>As you already know, <a href="http://github.com/Unitech/PM2">PM2</a> is a production process manager.<br>
+In this post I will show you how and why PM2 is best fit to deploy microservices-oriented applications.</p>
+<h2 id="microservicearchitecture">Micro-Service architecture</h2>
+<p><em>What is it ?</em></p>
+<p>There is a <a href="http://martinfowler.com/articles/microservices.html">lot to say</a> about the microservices architecture. Basically, it is a design pattern in which an application is the sum of many smaller independently deployable applications (services).<br>
+Each one of these smaller apps is designed to do a specific task <a href="http://onethingwell.org/post/457050307/about-one-thing-well">and do it well</a>.</p>
+<p><em>When to use it ?</em></p>
+<p>Instead of having one big monolithic software, you will separate it into different logical and independant services that will interact between them. To make these services interact between themselves you can use a PUB/SUB system like the one provided by <a href="http://redis.io">Redis</a> for example.</p>
+<p>The micro-service pattern allows you to :</p>
+<ul>
+<li>make re-usable components</li>
+<li>stop/start different elements</li>
+<li>scale the application easily</li>
+<li>make it easier for new developers in the team to understand the code</li>
+</ul>
+<p><em>How do we use it at Keymetrics?</em></p>
+<p>Every Keymetrics-node has 6 services running separately communicating between one another:</p>
+<ul>
+<li><strong>API</strong>, expose the data via HTTP</li>
+<li><strong>Interactor</strong>, listens to PM2 connections</li>
+<li><strong>Reverse Interactor</strong>, handles interactions from the dashboard</li>
+<li><strong>Notification</strong>, send emails and save notifications</li>
+<li><strong>Limit Worker</strong>, applies limit depending on the plan</li>
+<li><strong>Reporter</strong>, generate and send reports of your infra</li>
+</ul>
+<h2 id="pm2jsonprocessdeclaration">PM2 &amp; JSON process declaration</h2>
+<p>PM2 comes in quite handy when you have to manage several applications at once. It allows you to declare the behavior of each application with a simple JSON.</p>
+<p><strong>JSON declaration</strong></p>
+<p>Here is a simple example with two services running, an API and a Worker.</p>
+<p>Here is the content of my <code>processes.json</code>:</p>
+<pre><code class="language-language-json">[{
+&quot;script&quot;    : &quot;api.js&quot;,
+&quot;name&quot;      : &quot;web-api&quot;,
+&quot;exec_mode&quot; : &quot;cluster&quot;,
+&quot;instances&quot; : -1  // number of CPUs -1
+}, {
+&quot;script&quot;    : &quot;worker.js&quot;,
+&quot;name&quot;      : &quot;worker&quot;,
+&quot;exec_mode&quot; : &quot;fork&quot;,
+&quot;watch&quot;     : true,  // auto restart app on change,
+&quot;env&quot;            : {  // common env variables
+&quot;INTERVAL&quot; : 1000
+},
+&quot;env_production&quot; : {  // Used if --env prod
+&quot;INTERVAL&quot; : 60000
+}
+}]
+</code></pre>
+<p>There is a <a href="https://github.com/Unitech/PM2/blob/master/ADVANCED_README.md#list-of-all-json-declaration-fields-avaibles">wide range of options</a> that can be passed to each process.</p>
+<p>Now it's easy to manage these processes:</p>
+<pre><code class="language-language-shell">$ pm2 start  processes.json
+$ pm2 start  processes.json --env production
+$ pm2 stop   processes.json
+$ pm2 delete processes.json
+$ pm2 reload processes.json
+
+# Manage single process
+$ pm2 stop   web-api
+$ pm2 reload web-api
+</code></pre>
+<p><strong>Programmatic</strong></p>
+<p>PM2 also offers a simple programmatic API which allows you to start JSON straight from your code:</p>
+<pre><code class="language-language-javascript">var pm2 = require('pm2');
+
+pm2.connect(function() {
+pm2.start([{
+&quot;script&quot;    : &quot;api.js&quot;,
+&quot;name&quot;      : &quot;web-api&quot;,
+&quot;exec_mode&quot; : &quot;cluster&quot;,
+&quot;instances&quot; : -1  // number of CPUs -1
+}, {
+&quot;script&quot;    : &quot;worker.js&quot;,
+&quot;name&quot;      : &quot;worker&quot;,
+&quot;exec_mode&quot; : &quot;fork&quot;
+}], function(err, processes) {
+if (err) throw new Error(err);
+pm2.disconnect();  // Close connections to PM2
+});
+});
+</code></pre>
+<p><strong>List of all JSON-declaration fields</strong></p>
+<table class="table table-striped table-bordered">
+<tr>
+<th align="center">Field</th>
+<th align="center">Type</th>
+<th align="center">Example</th>
+<th align="center">Description</th>
+</tr>
+<tr>
+<td align="center">name</td>
+<td align="center">string</td>
+<td align="center">"myAPI"</td>
+<td align="center">name your app will have in PM2</td>
+</tr>
+<tr>
+<td align="center">script</td>
+<td align="center">string</td>
+<td align="center">"bin/app.js"</td>
+<td align="center">path of your app</td>
+</tr>
+<tr>
+<td align="center">args</td>
+<td align="center">list</td>
+<td align="center">["--enable-logs", "-n", "15"]</td>
+<td align="center">arguments given to your app when it is launched</td>
+</tr>
+<tr>
+<td align="center">node_args</td>
+<td align="center">list</td>
+<td align="center">["--harmony", "--max-stack-size=1024"]</td>
+<td align="center">arguments given to node when it is launched</td>
+</tr>
+<tr>
+<td align="center">cwd</td>
+<td align="center">string</td>
+<td align="center">"/var/www/app/prod"</td>
+<td align="center">the directory from which your app will be launched</td>
+</tr>
+<tr>
+<td align="center">exec_mode</td>
+<td align="center">string</td>
+<td align="center">"cluster"</td>
+<td align="center">"fork" mode is used by default, "cluster" mode can be configured with <code>instances</code> field</td>
+</tr>
+<tr>
+<td align="center">instances</td>
+<td align="center">number</td>
+<td align="center">4</td>
+<td align="center">number of instances for your clustered app, <code>0</code> means as much instances as you have CPU cores. a negative value means CPU cores - value (e.g -1 on a 4 cores machine will spawn 3 instances)</td>
+</tr>
+<tr>
+<td align="center">exec_interpreter</td>
+<td align="center">string</td>
+<td align="center">"node"</td>
+<td align="center">defaults to "node". can be "python", "ruby", "bash" or whatever interpreter you wish to use. "none" will execute your app as a binary executable</td>
+</tr>
+<tr>
+<td align="center">log_date_format</td>
+<td align="center">string</td>
+<td align="center">"YYYY-MM-DD HH:mm Z"</td>
+<td align="center">format in which timestamps will be displayed in the logs</td>
+</tr>
+<tr>
+<td align="center">error_file</td>
+<td align="center">string</td>
+<td align="center">"/var/log/node-app/node-app.stderr.log"</td>
+<td align="center">path to the specified error log file. PM2 generates one by default if not specified and you can find it by typing <code>pm2 desc &lt;app id&gt;</code>
+</td>
+</tr>
+<tr>
+<td align="center">out_file</td>
+<td align="center">string</td>
+<td align="center">"/var/log/node-app/node-app.stdout.log"</td>
+<td align="center">path to the specified output log file. PM2 generates one by default if not specified and you can find it by typing <code>pm2 desc &lt;app id&gt;</code>
+</td>
+</tr>
+<tr>
+<td align="center">pid_file</td>
+<td align="center">string</td>
+<td align="center">"pids/node-geo-api.pid"</td>
+<td align="center">path to the specified pid file. PM2 generates one by default if not specified and you can find it by typing <code>pm2 desc &lt;app id&gt;</code>
+</td>
+</tr>
+<tr>
+<td align="center">merge_logs</td>
+<td align="center">boolean</td>
+<td align="center">false</td>
+<td align="center">defaults to false. if true, it will merge stdout and stderr logs into the same file</td>
+</tr>
+<tr>
+<td align="center">cron_restart</td>
+<td align="center">string</td>
+<td align="center">"1 0 * * *"</td>
+<td align="center">a cron pattern to restart your app. only works in "cluster" mode for now. soon to be avaible in "fork" mode as well</td>
+</tr>
+<tr>
+<td align="center">watch</td>
+<td align="center">boolean</td>
+<td align="center">true</td>
+<td align="center">enables the watch feature, defaults to "false". if true, it will restart your app everytime a file change is detected on the folder or subfolder of your app.</td>
+</tr>
+<tr>
+<td align="center">ignore_watch</td>
+<td align="center">list</td>
+<td align="center">["[\/\\]\./", "node_modules"]</td>
+<td align="center">list of regex to ignore some file or folder names by the watch feature</td>
+</tr>
+<tr>
+<td align="center">max_restarts</td>
+<td align="center">number</td>
+<td align="center">10</td>
+<td align="center">number of consecutive unstable restarts (less than 1sec interval) before your app is considered errored and stop being restarted by PM2. defaults to 15.</td>
+</tr>
+<tr>
+<td align="center">max_memory_restart</td>
+<td align="center">string</td>
+<td align="center">"150M"</td>
+<td align="center">your app will be restarted by PM2 if it exceeds the amount of memory specified. human-friendly format : it can be "10M", "100K", "2G" and so on...</td>
+</tr>
+<tr>
+<td align="center">env</td>
+<td align="center">object</td>
+<td align="center">{"NODE_ENV": "production", "ID": "42"}</td>
+<td align="center">env variables which will appear in your app</td>
+</tr>
+<tr>
+<td align="center">autorestart</td>
+<td align="center">boolean</td>
+<td align="center">false</td>
+<td align="center">true by default. if false, PM2 will not restart your app if it crashes or ends peacefully</td>
+</tr>
+<tr>
+<td align="center">vizion</td>
+<td align="center">boolean</td>
+<td align="center">false</td>
+<td align="center">true by default. if false, PM2 will start without vizion features (versioning control metadatas)</td>
+</tr>
+<tr>
+<td align="center">post_update</td>
+<td align="center">list</td>
+<td align="center">["npm install", "echo launching the app"]</td>
+<td align="center">a list of commands which will be executed after you perform a Pull/Upgrade operation from Keymetrics dashboard</td>
+</tr>
+<tr>
+<td align="center">force</td>
+<td align="center">boolean</td>
+<td align="center">true</td>
+<td align="center">defaults to false. if true, you can start the same script several times which usually is not allowed by PM2</td>
+</tr>
+<tr>
+<td align="center">next_gen_js</td>
+<td align="center">boolean</td>
+<td align="center">true</td>
+<td align="center">defaults to false. if true, PM2 will launch your app using embedded BabelJS features which means you can run ES6/ES7 javascript code</td>
+</tr>
+</table>
+<p><strong>Binding multiple process to different ports</strong></p>
+<p>When you start an app in cluster mode with PM2, let's say <code>pm2 start app.js -i 8</code>, each of the instances will have an env variable named <code>NODE_APP_INSTANCE</code> which in this case goes from 0 to 7.<br>
+It allows you to identify each instance and for example do something like <code>server.listen(8000 + process.env.NODE_APP_INSTANCE);</code></p>
+<h2 id="conclusion">Conclusion</h2>
+<p>Learn more about JSON application declaration <a href="https://github.com/Unitech/PM2/blob/master/ADVANCED_README.md#json-app-declaration">here</a>.</p>
+<p>PM2 makes it easy to manage processes. These processes can be Node.js applications, PHP and even ASM! :)</p>
+
+  </div>
+</section>
